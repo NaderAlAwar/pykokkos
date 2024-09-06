@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, Type, Union, List
 import sysconfig
 
@@ -41,6 +42,12 @@ class Runtime:
         self.module_setups: Dict[Tuple, ModuleSetup] = {}
 
         self.fusion_strategy: Optional[str] = os.getenv("PK_FUSION")
+        self.tracing_time: float = 0.0
+        self.fusion_time: float = 0.0
+
+    def __del__(self):
+        print(f"runtime tracing: {self.tracing_time}")
+        print(f"runtime fusion: {self.fusion_time}")
 
     def run_workload(self, space: ExecutionSpace, workload: object) -> None:
         """
@@ -146,8 +153,11 @@ class Runtime:
             parser = self.compiler.get_parser(metadata.path)
 
         if self.fusion_strategy is not None:
+            start = time.time()
             future = Future()
             self.tracer.log_operation(future, name, policy, workunit, operation, parser, metadata.name, **kwargs)
+            stop = time.time()
+            self.tracing_time += stop - start
             return future
 
         return self.execute_workunit(name, policy, workunit, operation, parser, **kwargs)
@@ -186,9 +196,12 @@ class Runtime:
             restrict_kwargs: Dict[str, Any]
 
             if self.fusion_strategy is not None and isinstance(workunit, list):
+                start = time.time()
                 parsers = [self.compiler.get_parser(get_metadata(e).path) for e in workunit]
                 entity_trees = [this_parser.get_entity(get_metadata(this_entity).name).AST for this_entity, this_parser in zip(workunit, parsers)]
                 restrict_kwargs, _ = fuse_workunit_kwargs_and_params(entity_trees, kwargs, f"parallel_{operation}")
+                stop = time.time()
+                self.fusion_time += stop - start
             else:
                 restrict_kwargs = kwargs
 
@@ -211,8 +224,15 @@ class Runtime:
 
         assert self.fusion_strategy is not None
 
+        start = time.time()
         operations: List[TracerOperation] = self.tracer.get_operations(data)
+        stop = time.time()
+        self.tracing_time += stop - start
+
+        start = time.time()
         operations = self.tracer.fuse(operations, self.fusion_strategy)
+        stop = time.time()
+        self.fusion_time += stop - start
 
         for op in operations:
             result = self.execute_workunit(op.name, op.policy, op.workunit, op.operation, op.parser, **op.args)
@@ -228,7 +248,10 @@ class Runtime:
             assert len(self.tracer.operations) == 0
             return
 
+        start = time.time()
         operations: List[TracerOperation] = self.tracer.fuse(list(self.tracer.operations), self.fusion_strategy)
+        stop = time.time()
+        self.fusion_time += stop - start
 
         for op in operations:
             result = self.execute_workunit(op.name, op.policy, op.workunit, op.operation, op.parser, **op.args)
@@ -360,10 +383,13 @@ class Runtime:
             else:
                 is_fused: bool = isinstance(entity, list)
                 if is_fused:
+                    start = time.time()
                     parsers = [self.compiler.get_parser(get_metadata(e).path) for e in entity]
                     entity_trees = [this_parser.get_entity(get_metadata(this_entity).name).AST for this_entity, this_parser in zip(entity, parsers)]
 
                     kwargs, _ = fuse_workunit_kwargs_and_params(entity_trees, kwargs, f"parallel_{operation}")
+                    stop = time.time()
+                    self.fusion_time += stop - start
                 entity_members = kwargs
 
         args.update(self.get_fields(entity_members))

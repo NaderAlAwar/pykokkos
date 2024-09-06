@@ -52,6 +52,11 @@ class Compiler:
         logging.basicConfig(stream=sys.stdout, level=numeric_level)
         self.logger = logging.getLogger()
 
+        self.fusion_time: float = 0.0
+
+    def __del__(self):
+        print(f"compiler fusion: {self.fusion_time}")
+
     def fuse_objects(self, metadata: List[EntityMetadata], fuse_ASTs: bool, **kwargs) -> Tuple[PyKokkosEntity, List[PyKokkosEntity]]:
         """
         Fuse two or more workunits into one
@@ -60,6 +65,8 @@ class Compiler:
         :param fuse_ASTs: whether to do the actual fusion of the ASTs, which is expensive
         :returns: the fused entity and all the classtypes it uses
         """
+
+        start = time.time()
 
         pyk_classtypes: List[PyKokkosEntity] = []
 
@@ -106,6 +113,9 @@ class Compiler:
             source = None
 
         entity = PyKokkosEntity(PyKokkosStyles.fused, fused_name, AST, full_ASTs[0], source, None, pk_imports[0])
+
+        stop = time.time()
+        self.fusion_time += stop - start
 
         return entity, pyk_classtypes
 
